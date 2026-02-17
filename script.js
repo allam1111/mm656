@@ -1,160 +1,193 @@
-// DOM Elements
-const body = document.body;
-const themeToggle = document.getElementById('theme-toggle');
-const cartBtn = document.getElementById('cart-btn');
-const cartModal = document.getElementById('cart-modal');
-const closeModalBtns = document.querySelectorAll('.close-btn');
-const adminTrigger = document.getElementById('admin-trigger');
-const adminModal = document.getElementById('admin-modal');
-const productsGrid = document.getElementById('products-grid');
-const addProductForm = document.getElementById('add-product-form');
+const { useState, useEffect } = React;
 
-// --- Theme Logic ---
-const savedTheme = localStorage.getItem('theme') || 'dark'; // Default to Dark
-body.setAttribute('data-theme', savedTheme);
+const App = () => {
+    const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+    const [isCartOpen, setIsCartOpen] = useState(false);
+    const [isAdminOpen, setIsAdminOpen] = useState(false);
+    const [products, setProducts] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-themeToggle.addEventListener('click', () => {
-    const currentTheme = body.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    body.setAttribute('data-theme', newTheme);
-    localStorage.setItem('theme', newTheme);
-});
+    // Set Theme on Body
+    useEffect(() => {
+        document.body.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+    }, [theme]);
 
-// --- Modal Logic ---
-function openModal(modal) {
-    modal.classList.remove('hidden'); // Ensure display block if using display:none
-    // Force reflow
-    void modal.offsetWidth; 
-    modal.classList.add('active');
-}
-
-function closeModal(modal) {
-    modal.classList.remove('active');
-    setTimeout(() => {
-        // modal.classList.add('hidden'); // Optional if strictly hiding is needed
-    }, 300);
-}
-
-cartBtn.addEventListener('click', () => openModal(cartModal));
-
-closeModalBtns.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-        const modal = e.target.closest('.modal');
-        closeModal(modal);
-    });
-});
-
-// Close when clicking outside content
-window.addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal')) {
-        closeModal(e.target);
-    }
-});
-
-// --- Admin Access ---
-adminTrigger.addEventListener('click', () => {
-    closeModal(cartModal);
-    setTimeout(() => openModal(adminModal), 300);
-});
-
-// --- Firebase & App Logic ---
-
-// Wait for Firebase to initialize (from script tags)
-document.addEventListener('DOMContentLoaded', () => {
-    try {
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
-        
-        const db = firebase.firestore();
-        const storage = firebase.storage();
-        
-        console.log("Firebase Initialized");
-
-        // Fetch Products
-        fetchProducts(db);
-        
-        // Add Product Handle
-        addProductForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            await handleAddProduct(e, db, storage);
-        });
-
-    } catch (error) {
-        console.error("Firebase Config missing or invalid:", error);
-        productsGrid.innerHTML = `<div class="empty-state"><p>بانتظار ربط قاعدة البيانات (Firebase)</p></div>`;
-    }
-});
-
-function fetchProducts(db) {
-    productsGrid.innerHTML = '<div class="empty-state"><p>جار التحميل...</p></div>';
-    
-    db.collection('products').onSnapshot((snapshot) => {
-        if (snapshot.empty) {
-            productsGrid.innerHTML = '<div class="empty-state"><p>لا توجد منتجات حالياً.</p></div>';
+    // Firebase Real-time Sync
+    useEffect(() => {
+        if (!window.firebaseConfig || !window.firebaseConfig.apiKey) {
+            setLoading(false);
             return;
         }
 
-        let html = '';
-        snapshot.forEach(doc => {
-            const product = doc.data();
-            html += `
-                <article class="product-card">
-                    <img src="${product.imageUrl}" alt="${product.name}" class="product-img">
-                    <div class="product-info">
-                        <h3 class="product-title">${product.name}</h3>
-                        <div class="product-price">${product.price} ج.م</div>
-                        <button class="add-to-cart-btn">إضافة للسلة</button>
-                    </div>
-                </article>
-            `;
-        });
-        productsGrid.innerHTML = html;
-    }, (error) => {
-        console.error("Error fetching products:", error);
-        productsGrid.innerHTML = '<div class="empty-state"><p>حدث خطأ في تحميل المنتجات.</p></div>';
-    });
-}
-
-async function handleAddProduct(e, db, storage) {
-    const btn = e.target.querySelector('button[type="submit"]');
-    const originalText = btn.innerText;
-    btn.innerText = "جار الإضافة...";
-    btn.disabled = true;
-
-    try {
-        const file = document.getElementById('product-image-file').files[0];
-        const name = document.getElementById('product-name').value;
-        const price = document.getElementById('product-price').value;
-
-        if (!file) {
-            alert("يرجى اختيار صورة");
-            throw new Error("No file selected");
+        if (!firebase.apps.length) {
+            firebase.initializeApp(window.firebaseConfig);
         }
 
-        // 1. Upload Image
-        const storageRef = storage.ref(`products/${Date.now()}_${file.name}`);
-        const snapshot = await storageRef.put(file);
-        const imageUrl = await snapshot.ref.getDownloadURL();
+        const db = firebase.firestore();
+        const unsubscribe = db.collection('products')
+            .orderBy('createdAt', 'desc')
+            .onSnapshot(snapshot => {
+                const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setProducts(fetched);
+                setLoading(false);
+            });
 
-        // 2. Add to Firestore
-        await db.collection('products').add({
-            name: name,
-            price: Number(price),
-            imageUrl: imageUrl,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        return () => unsubscribe();
+    }, []);
 
-        // Reset Form
-        e.target.reset();
-        alert("تمت إضافة المنتج بنجاح!");
-        closeModal(adminModal);
+    const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
-    } catch (error) {
-        console.error("Error adding product:", error);
-        alert("حدث خطأ: " + error.message);
-    } finally {
-        btn.innerText = originalText;
-        btn.disabled = false;
-    }
-}
+    return (
+        <div className="app-wrapper">
+            {/* Navbar */}
+            <nav className="nav-container">
+                <div className="nav-blur"></div>
+                <div className="nav-content">
+                    <div className="logo">MAHAL AL FAJER</div>
+                    <div className="nav-actions">
+                        <button onClick={toggleTheme} className="nav-btn">
+                            {theme === 'dark' ? (
+                                <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path></svg>
+                            ) : (
+                                <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                            )}
+                        </button>
+                        <button onClick={() => setIsCartOpen(true)} className="nav-btn">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4H6z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            </nav>
+
+            {/* Hero */}
+            <header className="hero">
+                <h1>Crafted Luxury</h1>
+                <p>Redefining style with premium quality and timeless design. Elevate your wardrobe with Mahal Al Fajer.</p>
+            </header>
+
+            {/* Product Grid */}
+            <main className="grid">
+                {loading ? (
+                    <div className="empty-state">Syncing with collection...</div>
+                ) : products.length > 0 ? (
+                    products.map(product => (
+                        <div key={product.id} className="card">
+                            <div className="card-img-container">
+                                <img src={product.imageUrl} alt={product.name} className="card-img" />
+                                <div className="card-overlay">
+                                    <h3 style={{ fontSize: '1.4rem' }}>{product.name}</h3>
+                                    <div className="price">${product.price}</div>
+                                </div>
+                            </div>
+                            <div className="card-body">
+                                <button className="btn-buy">Add to Cart</button>
+                            </div>
+                        </div>
+                    ))
+                ) : (
+                    <div className="empty-state">
+                        <p>No collections available yet.</p>
+                        <p style={{ fontSize: '0.9rem', marginTop: '1rem' }}>Awaiting database link...</p>
+                    </div>
+                )}
+            </main>
+
+            {/* Cart Modal */}
+            {isCartOpen && (
+                <div className="modal-overlay" onClick={() => setIsCartOpen(false)}>
+                    <div className="modal-container" onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}>
+                            <h2>Shopping Bag</h2>
+                            <button onClick={() => setIsCartOpen(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.5rem' }}>&times;</button>
+                        </div>
+                        <div style={{ padding: '2rem 0', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                            Your bag is currently empty.
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2rem', borderTop: '1px solid var(--glass-border)', paddingTop: '1.5rem' }}>
+                            <div className="secret-dot" onClick={() => { setIsCartOpen(false); setIsAdminOpen(true); }}>.</div>
+                            <div style={{ fontWeight: '700' }}>Total: $0.00</div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Admin Modal */}
+            {isAdminOpen && (
+                <AdminPanel onClose={() => setIsAdminOpen(false)} />
+            )}
+        </div>
+    );
+};
+
+const AdminPanel = ({ onClose }) => {
+    const [file, setFile] = useState(null);
+    const [name, setName] = useState('');
+    const [price, setPrice] = useState('');
+    const [status, setStatus] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!file) return alert("Select an image first");
+
+        setIsSubmitting(true);
+        setStatus('Uploading assets...');
+
+        try {
+            const storage = firebase.storage();
+            const db = firebase.firestore();
+
+            const storageRef = storage.ref(`products/${Date.now()}_${file.name}`);
+            const snapshot = await storageRef.put(file);
+            const imageUrl = await snapshot.ref.getDownloadURL();
+
+            await db.collection('products').add({
+                name,
+                price: Number(price),
+                imageUrl,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+
+            setStatus('Collection updated!');
+            setTimeout(onClose, 1000);
+        } catch (err) {
+            alert(err.message);
+            setStatus('Error occurred');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-container" onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}>
+                    <h2>Admin Console</h2>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.5rem' }}>&times;</button>
+                </div>
+                <form onSubmit={handleSubmit}>
+                    <div style={{ marginBottom: '1.5rem' }}>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Product Visual</label>
+                        <input type="file" onChange={e => setFile(e.target.files[0])} className="input-field" required />
+                    </div>
+                    <div style={{ marginBottom: '1.5rem' }}>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Collection Name</label>
+                        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Signature Tee" className="input-field" required />
+                    </div>
+                    <div style={{ marginBottom: '2rem' }}>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Market Price ($)</label>
+                        <input type="number" value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" className="input-field" required />
+                    </div>
+                    <button type="submit" disabled={isSubmitting} className="btn-buy" style={{ marginTop: 0 }}>
+                        {isSubmitting ? 'Syncing...' : 'Add Collection'}
+                    </button>
+                    <div style={{ textAlign: 'center', marginTop: '1rem', size: '0.8rem', color: 'var(--accent)' }}>{status}</div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
