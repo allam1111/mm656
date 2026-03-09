@@ -242,20 +242,34 @@ function AdminDashboard({ user }) {
 
     const parseList = (str) => str.split(',').map(s => s.trim()).filter(Boolean);
 
+    // Compress image using canvas → base64 JPEG
+    const compressImage = (file, maxW = 900, quality = 0.78) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+                const ratio = Math.min(1, maxW / img.width, maxW / img.height);
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width * ratio;
+                canvas.height = img.height * ratio;
+                canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            };
+            img.onerror = reject;
+            img.src = ev.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+
     const handleSubmit = async (e) => {
         e.preventDefault(); setSubmitting(true);
         try {
             let imageUrl = form.imageUrl || editing?.imageUrl || "";
-            // If a file was chosen, try to upload to Storage first
+            // File chosen → compress → base64 stored in Firestore
             if (file && imgMode === "file") {
-                try {
-                    const ref = storage.ref(`products/${Date.now()}_${file.name}`);
-                    const snap = await ref.put(file);
-                    imageUrl = await snap.ref.getDownloadURL();
-                } catch (storageErr) {
-                    notify("فشل رفع الصورة على Storage — تأكد من تفعيل Firebase Storage وإعداد الـ Rules", "error");
-                    setSubmitting(false); return;
-                }
+                notify("جاري ضغط الصورة...", "success");
+                imageUrl = await compressImage(file);
             }
             if (!imageUrl) { notify("أضف رابط صورة أو ارفع صورة", "error"); setSubmitting(false); return; }
             const data = {
@@ -400,7 +414,8 @@ function AdminDashboard({ user }) {
                                         onChange={e => setFile(e.target.files[0])}
                                         required={!editing && !form.imageUrl} />
                                 )}
-                                {imgMode === "url" && <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>💡 ارفع الصورة على <a href="https://imgbb.com" target="_blank" style={{ color: 'var(--accent)' }}>imgbb.com</a> واحضر الرابط المباشر</p>}
+                                {imgMode === "url" && <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>💡 الصورة هتتخزن في Firestore مباشرةً وما بتحتاجش Storage</p>}
+                                {imgMode === "file" && <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>💡 الصورة هتتضغط تلقائياً وتتخزن في Firestore بدون Storage</p>}
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '0.7rem', marginTop: '0.5rem' }}>
