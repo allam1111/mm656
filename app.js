@@ -221,9 +221,10 @@ function AdminDashboard({ user }) {
     const [products, setProducts] = useState([]);
     const [orders, setOrders] = useState([]);
     const [loadP, setLoadP] = useState(true); const [loadO, setLoadO] = useState(true);
-    const [form, setForm] = useState({ name: "", price: "", description: "", sizes: "", colors: "" });
+    const [form, setForm] = useState({ name: "", price: "", description: "", sizes: "", colors: "", imageUrl: "" });
     const [file, setFile] = useState(null); const [editing, setEditing] = useState(null);
     const [submitting, setSubmitting] = useState(false);
+    const [imgMode, setImgMode] = useState("url"); // "url" | "file"
     const notify = React.useContext(ToastCtx);
     const fileRef = useRef();
 
@@ -244,12 +245,19 @@ function AdminDashboard({ user }) {
     const handleSubmit = async (e) => {
         e.preventDefault(); setSubmitting(true);
         try {
-            let imageUrl = editing?.imageUrl || "";
-            if (file) {
-                const ref = storage.ref(`products/${Date.now()}_${file.name}`);
-                const snap = await ref.put(file);
-                imageUrl = await snap.ref.getDownloadURL();
+            let imageUrl = form.imageUrl || editing?.imageUrl || "";
+            // If a file was chosen, try to upload to Storage first
+            if (file && imgMode === "file") {
+                try {
+                    const ref = storage.ref(`products/${Date.now()}_${file.name}`);
+                    const snap = await ref.put(file);
+                    imageUrl = await snap.ref.getDownloadURL();
+                } catch (storageErr) {
+                    notify("فشل رفع الصورة على Storage — تأكد من تفعيل Firebase Storage وإعداد الـ Rules", "error");
+                    setSubmitting(false); return;
+                }
             }
+            if (!imageUrl) { notify("أضف رابط صورة أو ارفع صورة", "error"); setSubmitting(false); return; }
             const data = {
                 name: form.name,
                 price: Number(form.price),
@@ -266,7 +274,7 @@ function AdminDashboard({ user }) {
                 await db.collection("products").add({ ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
                 notify("تم إضافة المنتج ✓", "success");
             }
-            setForm({ name: "", price: "", description: "", sizes: "", colors: "" }); setFile(null);
+            setForm({ name: "", price: "", description: "", sizes: "", colors: "", imageUrl: "" }); setFile(null);
             if (fileRef.current) fileRef.current.value = "";
         } catch (e) { notify(e.message, "error"); } finally { setSubmitting(false); }
     };
@@ -279,7 +287,9 @@ function AdminDashboard({ user }) {
             description: p.description || "",
             sizes: (p.sizes || []).join(", "),
             colors: (p.colors || []).join(", "),
+            imageUrl: p.imageUrl || "",
         });
+        setImgMode("url");
         window.scrollTo({ top: document.querySelector('.add-product-form')?.offsetTop - 100, behavior: 'smooth' });
     };
 
@@ -359,8 +369,38 @@ function AdminDashboard({ user }) {
                                 <input className="input-field" value={form.colors} onChange={e => setForm({ ...form, colors: e.target.value })} placeholder="أحمر, أبيض, أسود, أزرق" />
                             </div>
                             <div className="field-group" style={{ gridColumn: '1/-1' }}>
-                                <label className="field-label">صورة المنتج {editing ? "(اختياري - اتركه فارغاً للاحتفاظ بالقديمة)" : "*"}</label>
-                                <input className="input-field" type="file" accept="image/*" ref={fileRef} onChange={e => setFile(e.target.files[0])} {...(!editing ? { required: true } : {})} />
+                                <label className="field-label">صورة المنتج *</label>
+                                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '8px' }}>
+                                    <button type="button" onClick={() => setImgMode("url")}
+                                        style={{
+                                            padding: '6px 14px', borderRadius: '8px', border: '1px solid', fontFamily: 'Cairo,sans-serif', fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s',
+                                            borderColor: imgMode === "url" ? 'var(--accent)' : 'var(--glass-border)',
+                                            background: imgMode === "url" ? 'var(--accent)' : 'var(--glass)',
+                                            color: imgMode === "url" ? '#000' : 'var(--text)'
+                                        }}>
+                                        🔗 رابط URL
+                                    </button>
+                                    <button type="button" onClick={() => setImgMode("file")}
+                                        style={{
+                                            padding: '6px 14px', borderRadius: '8px', border: '1px solid', fontFamily: 'Cairo,sans-serif', fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s',
+                                            borderColor: imgMode === "file" ? 'var(--accent)' : 'var(--glass-border)',
+                                            background: imgMode === "file" ? 'var(--accent)' : 'var(--glass)',
+                                            color: imgMode === "file" ? '#000' : 'var(--text)'
+                                        }}>
+                                        📁 رفع من الجهاز
+                                    </button>
+                                </div>
+                                {imgMode === "url" ? (
+                                    <input className="input-field" type="url" value={form.imageUrl}
+                                        onChange={e => setForm({ ...form, imageUrl: e.target.value })}
+                                        placeholder="https://example.com/image.jpg"
+                                        required={!editing} />
+                                ) : (
+                                    <input className="input-field" type="file" accept="image/*" ref={fileRef}
+                                        onChange={e => setFile(e.target.files[0])}
+                                        required={!editing && !form.imageUrl} />
+                                )}
+                                {imgMode === "url" && <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>💡 ارفع الصورة على <a href="https://imgbb.com" target="_blank" style={{ color: 'var(--accent)' }}>imgbb.com</a> واحضر الرابط المباشر</p>}
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '0.7rem', marginTop: '0.5rem' }}>
